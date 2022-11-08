@@ -1,0 +1,10 @@
+<RCC>
+  <qresource prefix="icons">
+    <file>../icons/my_style_signature.png</file>
+  </qresource>
+  <qresource prefix="img">
+   <file>../img/Fire_H_200.jpg</file>
+   <file>../img/ME_H_200.png</file>
+   <file>../img/ship_H_200.png</file>
+  </qresource>
+</RCC>
