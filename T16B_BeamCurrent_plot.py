@@ -627,9 +627,9 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
         Args:
             ch_name (str): _description_
         """
-        pv_setinfo=f'{self.pvname} Monitor'
+        pv_setinfo=f'{ch_pvname} Monitor'
         try:
-            self._pv=PV(self.pvname,callback=self.pv_value_changed,connection_timeout=5)
+            self._pv=PV(ch_pvname,callback=self.pv_value_changed,connection_timeout=5)
             if self._pv.connect(timeout=5):
                 value=self._pv.get()
                 if value:
@@ -643,7 +643,7 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
         else:
             self.monitoring_flag=True
         finally:
-            print(f'end PV:{self.pvname} set')
+            print(f'end PV:{ch_pvname} set')
             self.statusbar.showMessage(pv_setinfo,5)
 
     def pv_value_changed(self,pvname=None,value=None,**kw):
