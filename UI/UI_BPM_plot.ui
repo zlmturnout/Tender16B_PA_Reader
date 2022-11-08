@@ -3672,7 +3672,7 @@ border-top-color: rgb(33, 33, 33);}</string>
                     <string/>
                    </property>
                    <property name="suffix">
-                    <string> eV</string>
+                    <string/>
                    </property>
                    <property name="decimals">
                     <number>1</number>

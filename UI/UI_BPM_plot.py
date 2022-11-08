@@ -1772,7 +1772,7 @@ class Ui_MainWindow(object):
         self.Step_ch_pos.setToolTip(QCoreApplication.translate("MainWindow", u"Each Step size Z", None))
 #endif // QT_CONFIG(tooltip)
         self.Step_ch_pos.setPrefix("")
-        self.Step_ch_pos.setSuffix(QCoreApplication.translate("MainWindow", u" eV", None))
+        self.Step_ch_pos.setSuffix("")
 #if QT_CONFIG(tooltip)
         self.ch_pos_right.setToolTip(QCoreApplication.translate("MainWindow", u"Increase", None))
 #endif // QT_CONFIG(tooltip)
