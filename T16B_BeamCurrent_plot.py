@@ -18,7 +18,9 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QGridLayout,
                                QMainWindow, QMessageBox, QPushButton, QStyle,
                                QWidget)
 from serial import SerialException
-
+# Pyepics for epics access 
+from epics import (ca, caget, cainfo, camonitor, caput, PV, camonitor_clear,
+                 get_pv)
 # import data form to save dict data
 from Dependant.Dict_DataFrame_Sqlite import (dict_to_csv, dict_to_excel,
                                              dict_to_json, dict_to_SQLTable)
@@ -33,6 +35,8 @@ from Dependant.Tools_functions import (creatPath, deco_count_time,
 #from Linkage.Keithley_pAmeter_driver import Read6517bCurrent
 from Linkage.Keithley_pA6514_driver_R232 import Keithley6514Com, get_COM_port
 from Linkage.PMC_motor_driver import pmc, pmcSetThread
+# import scan channel info
+from Linkage.EPICS_PV_names_T16B import FULL_Channels
 # import data view plot UI
 from UI.Data_View_Plot import DataViewPlot
 # import scan range UI
@@ -55,7 +59,7 @@ Port_list = [23, 26, 29, 32]  # port in USR_N540
 pA_address = (HOST, Port_list[1])
 # pA_PORT=TelnetAdapter(HOST,Port_list[1]) # for connection via USR450_To_RS232/485
 pA_PORT = 'ASRL6::INSTR'  # for direct connection via RS232/485
-pA6514_port='Com5'
+pA6485_port='Com5'
 # pmc  channel info
 pmc_channels={'Ch3_X':3,'Ch4_Y':4,'Ch5_Z':5}
 file_path=os.getcwd()
@@ -86,14 +90,14 @@ full_data = {'BPM-X pos(um)': self._plot_X_list, 'BPM-Z pos(um)': self._plot_Z_l
 # **************************************LIMIN_Zhou_at_SSRF_BL20U**************************************
 
 
-class PMCMotionPlot(QMainWindow, Ui_MainWindow):
+class BeamMotionPlot(QMainWindow, Ui_MainWindow):
     # signal used
     scan_info_sig = Signal(dict)
     scan_start_sig = Signal(list)
 
     @log_exceptions(log_func=logger.error)
     def __init__(self, parent=None):
-        super(PMCMotionPlot, self).__init__(parent)
+        super(BeamMotionPlot, self).__init__(parent)
         self.setupUi(self)
         self.setWindowTitle('RIXS@09_BeamSpot_plot')
         self.__ini_output()
@@ -320,20 +324,20 @@ class PMCMotionPlot(QMainWindow, Ui_MainWindow):
         self.gridlayout = QGridLayout(self.pAmeter_plot)
         self.gridlayout.addWidget(self.pAmeter_figure)
         # initialize PMC X position Monitor figure Myplot for usage
+        self.ch_pos_figure = MonitorPlot()
+        # add NavigationToolbar in the figure (widgets)
+        # self.fig_ntb = NavigationToolbar(self.figure, self)
+        # add the figure into the Plot box
+        self.gridlayout = QGridLayout(self.ch_position)
+        self.gridlayout.addWidget(self.ch_pos_figure)
+
+        # initialize PMC Y position Monitor figure Myplot for usage
         self.X_pos_figure = MonitorPlot()
         # add NavigationToolbar in the figure (widgets)
         # self.fig_ntb = NavigationToolbar(self.figure, self)
         # add the figure into the Plot box
         self.gridlayout = QGridLayout(self.X_position)
         self.gridlayout.addWidget(self.X_pos_figure)
-
-        # initialize PMC Y position Monitor figure Myplot for usage
-        self.Y_pos_figure = MonitorPlot()
-        # add NavigationToolbar in the figure (widgets)
-        # self.fig_ntb = NavigationToolbar(self.figure, self)
-        # add the figure into the Plot box
-        self.gridlayout = QGridLayout(self.Y_position)
-        self.gridlayout.addWidget(self.Y_pos_figure)
 
         # initialize PMZ Z position Monitor figure Myplot for usage
         self.Z_pos_figure = MonitorPlot()
@@ -579,6 +583,166 @@ class PMCMotionPlot(QMainWindow, Ui_MainWindow):
     """
 
     # **************************************LIMIN_Zhou_at_SSRF_BL20U**************************************
+    """
+    start of the ch X-Y-Z motor part
+    """
+    def _ini_channel_scan(self):
+        # ini the channel scan part
+        self.scan_channel_name=self.Channel_cbx.currentText()
+        self.scan_channel=FULL_Channels.get(self.Channel_cbx.currentText(),None)
+        self.Channel_cbx.currentIndexChanged['int'].connect(self.set_scan_channel)
+        # for monitor data list
+        self.pv_changed_Num:int=0
+        self.pv_value_list=list()
+        self.pv_num_list=list()
+        self.pv_timestamps=list()
+        self.ch_current_value=value
+        # step move
+        self.Step_ch_pos.valueChanged.connect(self.get_ch_step)
+
+    @log_exceptions(log_func=logger.error)
+    @Slot(int)
+    def set_scan_channel(self, n: int):
+        """
+        choose instrument to measure current
+        :return:
+        """
+        self.Channel_tabs.setCurrentIndex(0)
+        self.scan_channel_name=self.Channel_cbx.currentText()
+        self.scan_channel=FULL_Channels.get(self.Channel_cbx.currentText(),None)
+        if self.scan_channel:
+            # basic PV names for ch set readback and motor moving status[optional]
+            self.ch_PVset=self.scan_channel.get("PV_SET",None)
+            self.ch_PVrbv=self.scan_channel.get("PV_RBV",None)
+            self.ch_PVmovn=self.scan_channel.get("PV_Motor_MOVN",None)
+            if self.ch_PVset and self.ch_PVrbv:
+                self.monitor_ch_value(self.ch_PVrbv)
+                self._scan_range_set_flag=0
+        else:
+            self.raise_warning(f"channel:{self.scan_channel_name} do not support!")          
+        
+    def monitor_ch_value(self,ch_pvname:str):
+        """monitor the ch_name value and plot
+
+        Args:
+            ch_name (str): _description_
+        """
+        pv_setinfo=f'{self.pvname} Monitor'
+        try:
+            self._pv=PV(self.pvname,callback=self.pv_value_changed,connection_timeout=5)
+            if self._pv.connect(timeout=5):
+                value=self._pv.get()
+                if value:
+                    self.ch_current_value=value
+                    self.lcd_ch_pos.display(value)
+                    pv_setinfo+=' started'
+                else:
+                    pv_setinfo+=' not connected'
+        except Exception as e:
+            print(traceback.format_exc() + str(e))
+        else:
+            self.monitoring_flag=True
+        finally:
+            print(f'end PV:{self.pvname} set')
+            self.statusbar.showMessage(pv_setinfo,5)
+
+    def pv_value_changed(self,pvname=None,value=None,**kw):
+        """
+        read PV value readback
+        update and plot
+        """
+        if value:
+            self.PV_value_input.setText(f'{value:.4f}')
+            timestamp=get_datetime()
+            self.pv_changed_Num+=1
+            self.pv_value_list.append(float(value))
+            self.pv_num_list.append(self.pv_changed_Num)
+            self.pv_timestamps.append(timestamp)
+            self.ch_current_value=value
+            if self.pv_changed_Num>100:
+                num_list=self.pv_num_list[-100:]
+                value_list=self.pv_value_list[-100:]
+                timestamps=self.pv_timestamps[-100:]
+            else:
+                num_list=self.pv_num_list
+                value_list=self.pv_value_list
+                timestamps=self.pv_timestamps
+            # plot the changes
+            if self.Plot_x_cbx.currentIndex()==0:
+                self.plot_PV_data(num_list,value_list,self.pvname,'ChangeNum')
+            else:
+                temp_timestamps=pd.Series(timestamps)
+                pd_timestamps=pd.to_datetime(temp_timestamps)
+                pd_value_list=pd.Series(value_list)
+                self.plot_PV_data(self.ch_pos_figure,pd_timestamps,pd_value_list,self.pvname,'Timestamp')
+
+    def plot_PV_data(self,ch_figure, x_list: list, y_list: list, x_name: str, y_name: str):
+        """
+        plot Grating position based on list: [x_pos] and change list [x_num_list]
+        :param x_pos:
+        :param x_num_list:
+        :return:
+        """
+        ch_figure.axes.cla()
+        ch_figure.axes.plot(x_list, y_list, marker='o', markersize=1, markerfacecolor='orchid',
+                                   markeredgecolor='orchid', linestyle='-', color='c')
+        ch_figure.axes.set_xlabel(x_name, fontsize=10, color='m')
+        ch_figure.axes.set_ylabel(y_name, fontsize=10, color='m')
+        ch_figure.axes.set_title(self.tagname,color='#ff5500')
+        ch_figure.axes.figure.autofmt_xdate(rotation=25)
+        ch_figure.axes.draw()
+
+    # for step size
+    @Slot()
+    def get_ch_step(self):
+        """
+        get Channel step size (um)
+        :return:
+        """
+        self.step_ch_size = float(self.Step_ch_pos.text())
+        print(f'set channel {self.scan_channel_name} step size to: {self.step_ch_size}')
+
+    # for Channel step move
+    @Slot()
+    def on_ch_pos_left_clicked(self):
+        """left clicked X pos move to current ch_value-ch_step
+        """
+        if self.pmc_motor.connect_status and not self.X_pos_move_flag:
+            current_X_pos=self.ch_values_dict['Ch3_X']
+            new_pos=current_X_pos-self.step_X_size
+            ch_num=ch_num=pmc_channels.get("Ch3_X")
+            try:
+                self.pmc_XLsetQThread = pmcSetThread(self.pmc_motor,ch_num, pos=new_pos,num=1,wait=100)
+                self.pmc_XLsetQThread.done_signal.connect(self.pmcX_set_done)
+                self.pmc_XLsetQThread.start()
+                self.X_pos_move_flag=True
+            except Exception as e:
+                print(e)
+                logger.error(traceback.format_exc() + str(e))
+        else:
+            self.raise_info('pmc not connected or last step not finished , will not move')
+
+    @Slot()
+    def on_X_pos_right_clicked(self):
+        """right clicked X pos move to current ch_value+ch_step
+        """
+        if self.pmc_motor.connect_status and not self.X_pos_move_flag:
+            current_X_pos=self.ch_values_dict['Ch3_X']
+            new_pos=current_X_pos+self.step_X_size
+            ch_num=ch_num=pmc_channels.get("Ch3_X")
+            try:
+                self.pmc_XRsetQThread = pmcSetThread(self.pmc_motor,ch_num, pos=new_pos,num=1,wait=100)
+                self.pmc_XRsetQThread.done_signal.connect(self.pmcX_set_done)
+                self.pmc_XRsetQThread.start()
+                self.X_pos_move_flag=True
+            except Exception as e:
+                print(e)
+                logger.error(traceback.format_exc() + str(e))
+        else:
+            self.raise_info('pmc not connected or last step not finished , will not move')
+    
+
+
     """
     start of the pmc X-Y-Z motor part
     """

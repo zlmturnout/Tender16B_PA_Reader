@@ -2,6 +2,8 @@
 This is dict data of the EPICS PV names in Eline20U soft
 """
 
+#should revised FULL_Channels whenever add new PV names
+
 # PV names for Energy SE=Soft_Energy
 SoftEnergy = {
     # set energy
@@ -47,3 +49,6 @@ BPM_Z = {
     'PV_RBV': "X20U:SoftEX2:BPM:Z.RBV",  # position read back
     'PV_Motor_MOVN': "X20U:SoftEX2:BPM:Z.MOVN",  # motor Z moving (0,1)
 }
+
+# Full channels for scan 
+FULL_Channels={"SoftEnergy":SoftEnergy,"PGM1_Grating":PGM1_Grating,"BPM_X":BPM_X,"BPM_Z":BPM_Z}
