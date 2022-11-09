@@ -3,7 +3,7 @@
 ################################################################################
 ## Form generated from reading UI file 'UI_BPM_plot.ui'
 ##
-## Created by: Qt User Interface Compiler version 6.4.0
+## Created by: Qt User Interface Compiler version 6.3.0
 ##
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
@@ -27,7 +27,7 @@ class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
             MainWindow.setObjectName(u"MainWindow")
-        MainWindow.resize(1453, 838)
+        MainWindow.resize(1453, 839)
         sizePolicy = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
@@ -156,17 +156,17 @@ class Ui_MainWindow(object):
 
         self.horizontalLayout_3.addWidget(self.Channel_cbx)
 
-        self.Connect_pmc_btn = QPushButton(self.centralwidget)
-        self.Connect_pmc_btn.setObjectName(u"Connect_pmc_btn")
+        self.Connect_ch_btn = QPushButton(self.centralwidget)
+        self.Connect_ch_btn.setObjectName(u"Connect_ch_btn")
         sizePolicy1 = QSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         sizePolicy1.setHorizontalStretch(2)
         sizePolicy1.setVerticalStretch(0)
-        sizePolicy1.setHeightForWidth(self.Connect_pmc_btn.sizePolicy().hasHeightForWidth())
-        self.Connect_pmc_btn.setSizePolicy(sizePolicy1)
-        self.Connect_pmc_btn.setMinimumSize(QSize(100, 40))
-        self.Connect_pmc_btn.setMaximumSize(QSize(220, 16777215))
-        self.Connect_pmc_btn.setFont(font)
-        self.Connect_pmc_btn.setStyleSheet(u"QPushButton{background-color: rgb(0, 170, 127);border:2px;border-radius:10px;padding:2px 4px;selection-color: rgb(255, 85, 127);color: rgb(255, 255, 255);border-style:inset;border-top-color: rgb(167, 167, 167);border-left-color: rgb(138, 138, 138);\n"
+        sizePolicy1.setHeightForWidth(self.Connect_ch_btn.sizePolicy().hasHeightForWidth())
+        self.Connect_ch_btn.setSizePolicy(sizePolicy1)
+        self.Connect_ch_btn.setMinimumSize(QSize(100, 40))
+        self.Connect_ch_btn.setMaximumSize(QSize(220, 16777215))
+        self.Connect_ch_btn.setFont(font)
+        self.Connect_ch_btn.setStyleSheet(u"QPushButton{background-color: rgb(0, 170, 127);border:2px;border-radius:10px;padding:2px 4px;selection-color: rgb(255, 85, 127);color: rgb(255, 255, 255);border-style:inset;border-top-color: rgb(167, 167, 167);border-left-color: rgb(138, 138, 138);\n"
 "border-right-color: rgb(56, 56, 56);\n"
 "border-bottom-color: rgb(33, 33, 33);}\n"
 "\n"
@@ -177,7 +177,7 @@ class Ui_MainWindow(object):
 "border-left-color: rgb(56, 56, 56);\n"
 "border-top-color: rgb(33, 33, 33);}")
 
-        self.horizontalLayout_3.addWidget(self.Connect_pmc_btn)
+        self.horizontalLayout_3.addWidget(self.Connect_ch_btn)
 
         self.Port_cbx = QComboBox(self.centralwidget)
         self.Port_cbx.setObjectName(u"Port_cbx")
@@ -1610,7 +1610,7 @@ class Ui_MainWindow(object):
         self.menubar.setDefaultUp(False)
         self.menuMenu = QMenu(self.menubar)
         self.menuMenu.setObjectName(u"menuMenu")
-        self.menuMenu.setGeometry(QRect(342, 306, 163, 50))
+        self.menuMenu.setGeometry(QRect(342, 306, 161, 50))
         sizePolicy10 = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         sizePolicy10.setHorizontalStretch(0)
         sizePolicy10.setVerticalStretch(0)
@@ -1673,7 +1673,6 @@ class Ui_MainWindow(object):
         self.menubar.addAction(self.menuhelp.menuAction())
         self.menuAnalysis.addAction(self.actionView_data)
         self.menuAnalysis.addAction(self.actionDatabase)
-        self.menuInstrument.addAction(self.actionPMC_motor)
         self.menuInstrument.addAction(self.actionpAmeter)
 
         self.retranslateUi(MainWindow)
@@ -1696,14 +1695,14 @@ class Ui_MainWindow(object):
         self.actionpAmeter.setText(QCoreApplication.translate("MainWindow", u"pAmeter", None))
         self.actionDatabase.setText(QCoreApplication.translate("MainWindow", u"Database", None))
         self.label_2.setText(QCoreApplication.translate("MainWindow", u"Scan", None))
-        self.Channel_cbx.setItemText(0, QCoreApplication.translate("MainWindow", u"Energy", None))
+        self.Channel_cbx.setItemText(0, QCoreApplication.translate("MainWindow", u"SoftEnergy", None))
         self.Channel_cbx.setItemText(1, QCoreApplication.translate("MainWindow", u"BPM_X", None))
         self.Channel_cbx.setItemText(2, QCoreApplication.translate("MainWindow", u"BPM_Z", None))
 
 #if QT_CONFIG(tooltip)
-        self.Connect_pmc_btn.setToolTip(QCoreApplication.translate("MainWindow", u"Connect Electrometer6514", None))
+        self.Connect_ch_btn.setToolTip(QCoreApplication.translate("MainWindow", u"Connect Electrometer6514", None))
 #endif // QT_CONFIG(tooltip)
-        self.Connect_pmc_btn.setText(QCoreApplication.translate("MainWindow", u"Connect motor", None))
+        self.Connect_ch_btn.setText(QCoreApplication.translate("MainWindow", u"Connect motor", None))
 #if QT_CONFIG(tooltip)
         self.Connect_pAmeter_btn.setToolTip(QCoreApplication.translate("MainWindow", u"Connect Electrometer6514", None))
 #endif // QT_CONFIG(tooltip)

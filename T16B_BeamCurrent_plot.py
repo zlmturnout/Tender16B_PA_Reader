@@ -33,8 +33,9 @@ from Dependant.Tools_functions import (creatPath, deco_count_time,
                                        log_exceptions, my_logger, to_log)
 # import read thread for pAmeter 6517B
 #from Linkage.Keithley_pAmeter_driver import Read6517bCurrent
-from Linkage.Keithley_pA6514_driver_R232 import Keithley6514Com, get_COM_port
-from Linkage.PMC_motor_driver import pmc, pmcSetThread
+from Linkage.Keithley_pA6485_driver_R232 import Keithley6485Com, get_COM_port
+#from Linkage.PMC_motor_driver import pmc, pmcSetThread
+from Linkage.Mono_control import PVmotorThread
 # import scan channel info
 from Linkage.EPICS_PV_names_T16B import FULL_Channels
 # import data view plot UI
@@ -60,8 +61,6 @@ pA_address = (HOST, Port_list[1])
 # pA_PORT=TelnetAdapter(HOST,Port_list[1]) # for connection via USR450_To_RS232/485
 pA_PORT = 'ASRL6::INSTR'  # for direct connection via RS232/485
 pA6485_port='Com5'
-# pmc  channel info
-pmc_channels={'Ch3_X':3,'Ch4_Y':4,'Ch5_Z':5}
 file_path=os.getcwd()
 # save path info
 save_path = os.path.join(file_path, 'save_data')
@@ -103,32 +102,8 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
         self.__ini_output()
         self.__init_plot__()
         self.__ini_pAmeter__()
-        self.__ini_menu_instrument()
         self._ini_menu()
-        self._ini_pmc_motor()
-        self.__ini_PMC_plot__()
 
-    def __ini_menu_instrument(self):
-        self.pmc_motor=pmc(PMC_host, PMC_port)
-        self.actionPMC_motor.triggered.connect(self.show_PMC_status)
-        #self.actionpAmeter.triggered.connect(self.show_pAmeter_status)
-
-    @log_exceptions(log_func=logger.error)
-    def show_PMC_status(self):
-        if self.pmc_motor.connect_status:
-            pmc_status = ' connected'
-            version=self.pmc_motor.ver()
-        else:
-            connect_status=self.pmc_motor.connect()
-            if connect_status:
-                pmc_status = ' connected'
-                version=self.pmc_motor.ver()
-            else:
-                pmc_status =' not connected'
-        self.msg_box = MyMsgBox(title='PMC motor status', text=f'PMC motor' + pmc_status,
-                                details=f'PMC motor 'f'in {PMC_host}:{PMC_port} '
-                                        f'{pmc_status}\n+ version:{version}')
-        self.msg_box.show()
 
     # def show_pAmeter_status(self, check):
     #     timeout = 1
@@ -391,11 +366,11 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
             Selected_port = self.Port_cbx.currentText().split(':')[0]
             try:
                 self.serial_port=serial.Serial(Selected_port)
-                self.pAmeter6514 = Keithley6514Com(port=self.serial_port, func='currents', points=5,full_time=100,keep_on=0)
+                self.pAmeter6485 = Keithley6485Com(port=self.serial_port, func='currents', points=5,full_time=100,keep_on=0)
                 #status = self.pAmeter6514.open_port(Selected_port)
                 status = "OK"
                 connection_msg = self.Port_cbx.currentText() + ':\n' + str(status)
-                version=self.pAmeter6514.version
+                version=self.pAmeter6485.version
                 print(f'get version: {version}')
             except Exception as e: 
                 #pAmeter6514=None
@@ -464,10 +439,8 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
             print('Start monitoring pAmeter')
             self._pA_start_t = time.time()
             try:
-                self.MT_pAmeter6514 = Keithley6514Com(port=self.serial_port, func='currents', points=5,full_time=1000,keep_on=1)
-                self.MT_pAmeter6514.data_sig.connect(self.get_pAmonitor_data)
-                #status = self.MT_pAmeter6514.open_port(self.Selected_port)
-                # initialize keithley 6514 for current measurement
+                self.MT_pAmeter6485 = Keithley6485Com(port=self.serial_port, func='currents', points=5,full_time=1000,keep_on=1)
+                self.MT_pAmeter6485.data_sig.connect(self.get_pAmonitor_data)
                 status='OK'
                 print(status)
                 if  status=='OK':
@@ -475,8 +448,8 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
                     #self.MT_pAmeter6514.clear_status()
                     #self.MT_pAmeter6514.zero_check(status='OFF')
                     #self.MT_pAmeter6514.conf_function('current',wait=100)
-                    resp = self.MT_pAmeter6514.read_data(wait=100)
-                    data = self.MT_pAmeter6514.get_value(resp)
+                    resp = self.MT_pAmeter6485.read_data(wait=100)
+                    data = self.MT_pAmeter6485.get_value(resp)
                     print(f'get value:{data:.4e}A')
             except Exception as e:
                 print(e)
@@ -596,9 +569,32 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
         self.pv_value_list=list()
         self.pv_num_list=list()
         self.pv_timestamps=list()
-        self.ch_current_value=value
+        self.ch_value_dict={}
         # step move
+        self.step_ch_size=0
         self.Step_ch_pos.valueChanged.connect(self.get_ch_step)
+        self.ch_pos_move_flag=False
+        self.PVmonitoring_flag=False
+        #for ch connection status
+        self.ch_status_timer=QTimer() # status timer
+        self.ch_status_timer.timeout.connect(self.update_ch_status)
+        self.ch_shining_flag=0 # for indicate pmc connection
+
+    @Slot()
+    def on_Connect_ch_btn_clicked(self):
+        self.set_scan_channel(0)
+
+    @Slot()
+    def update_ch_status(self):
+        if self.PVmonitoring_flag:
+            if self.ch_shining_flag==0:
+                self.Connect_ch_btn.setStyleSheet("QPushButton{background-color: rgb(0, 255, 127);color:rgb(255, 255, 255)}")
+                self.ch_shining_flag=1
+            elif self.ch_shining_flag==1:
+                self.Connect_ch_btn.setStyleSheet("QPushButton{background-color: rgb(0, 170, 127);color:rgb(255, 255, 255)}")
+                self.ch_shining_flag=0
+        else:
+            pass
 
     @log_exceptions(log_func=logger.error)
     @Slot(int)
@@ -619,7 +615,7 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
                 self.monitor_ch_value(self.ch_PVrbv)
                 self._scan_range_set_flag=0
         else:
-            self.raise_warning(f"channel:{self.scan_channel_name} do not support!")          
+            self.raise_warning(f"channel: {self.scan_channel_name} do not support!")          
         
     def monitor_ch_value(self,ch_pvname:str):
         """monitor the ch_name value and plot
@@ -636,14 +632,14 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
                     self.ch_current_value=value
                     self.lcd_ch_pos.display(value)
                     pv_setinfo+=' started'
-                else:
-                    pv_setinfo+=' not connected'
+            else:
+                pv_setinfo+=' not connected'
         except Exception as e:
             print(traceback.format_exc() + str(e))
         else:
-            self.monitoring_flag=True
+            self.PVmonitoring_flag=True
         finally:
-            print(f'end PV:{ch_pvname} set')
+            print(f'end PV:{ch_pvname} set \n{pv_setinfo}')
             self.statusbar.showMessage(pv_setinfo,5)
 
     def pv_value_changed(self,pvname=None,value=None,**kw):
@@ -651,14 +647,14 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
         read PV value readback
         update and plot
         """
-        if value:
+        if value and pvname==self.ch_PVrbv:
             self.PV_value_input.setText(f'{value:.4f}')
             timestamp=get_datetime()
             self.pv_changed_Num+=1
             self.pv_value_list.append(float(value))
             self.pv_num_list.append(self.pv_changed_Num)
             self.pv_timestamps.append(timestamp)
-            self.ch_current_value=value
+            self.ch_value_dict[pvname]=value
             if self.pv_changed_Num>100:
                 num_list=self.pv_num_list[-100:]
                 value_list=self.pv_value_list[-100:]
@@ -707,355 +703,49 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
     def on_ch_pos_left_clicked(self):
         """left clicked X pos move to current ch_value-ch_step
         """
-        if self.pmc_motor.connect_status and not self.X_pos_move_flag:
-            current_X_pos=self.ch_values_dict['Ch3_X']
-            new_pos=current_X_pos-self.step_X_size
-            ch_num=ch_num=pmc_channels.get("Ch3_X")
+        if self.PVmonitoring_flag and not self.ch_pos_move_flag:
+            current_ch_pos=self.ch_value_dict[self.ch_PVrbv]
+            new_pos=current_ch_pos-self.step_ch_size
             try:
-                self.pmc_XLsetQThread = pmcSetThread(self.pmc_motor,ch_num, pos=new_pos,num=1,wait=100)
-                self.pmc_XLsetQThread.done_signal.connect(self.pmcX_set_done)
-                self.pmc_XLsetQThread.start()
-                self.X_pos_move_flag=True
+                print(f'ch pos: {current_ch_pos} move {new_pos} right is plus')
+                self.ch_Lset_thread = PVmotorThread(self.ch_PVset, new_pos, self.ch_PVrbv, self.ch_PVmovn, 1)
+                self.ch_Lset_thread.done_signal.connect(self.ch_pos_set_done)
+                self.ch_Lset_thread.start()
+                self.ch_pos_move_flag = True
             except Exception as e:
                 print(e)
                 logger.error(traceback.format_exc() + str(e))
         else:
-            self.raise_info('pmc not connected or last step not finished , will not move')
+            self.raise_info('Channel not connected or last step not finished , will not move')
 
     @Slot()
-    def on_X_pos_right_clicked(self):
+    def on_ch_pos_right_clicked(self):
         """right clicked X pos move to current ch_value+ch_step
         """
-        if self.pmc_motor.connect_status and not self.X_pos_move_flag:
-            current_X_pos=self.ch_values_dict['Ch3_X']
-            new_pos=current_X_pos+self.step_X_size
-            ch_num=ch_num=pmc_channels.get("Ch3_X")
+        if self.PVmonitoring_flag and not self.ch_pos_move_flag:
+            current_ch_pos=self.ch_value_dict[self.ch_PVrbv]
+            new_pos=current_ch_pos+self.step_ch_size
             try:
-                self.pmc_XRsetQThread = pmcSetThread(self.pmc_motor,ch_num, pos=new_pos,num=1,wait=100)
-                self.pmc_XRsetQThread.done_signal.connect(self.pmcX_set_done)
-                self.pmc_XRsetQThread.start()
-                self.X_pos_move_flag=True
+                print(f'ch pos: {current_ch_pos} move {new_pos} right is plus')
+                self.ch_Rset_thread = PVmotorThread(self.ch_PVset, new_pos, self.ch_PVrbv, self.ch_PVmovn, 1)
+                self.ch_Rset_thread.done_signal.connect(self.ch_pos_set_done)
+                self.ch_Rset_thread.start()
+                self.ch_pos_move_flag = True
             except Exception as e:
                 print(e)
                 logger.error(traceback.format_exc() + str(e))
         else:
-            self.raise_info('pmc not connected or last step not finished , will not move')
-    
-
-
-    """
-    start of the pmc X-Y-Z motor part
-    """
-    def _ini_pmc_motor(self):
-        # select channel
-        self.scan_channel=pmc_channels.get(self.Channel_cbx.currentText(),0)
-        self.scan_channel_name=self.Channel_cbx.currentText()
-        self.Channel_cbx.currentIndexChanged['int'].connect(self.set_scan_channel)
-        self.SPD_cbx.currentIndexChanged['int'].connect(self.set_ch_speedmode)
-        self.ch_pos_lcd_dict={'Ch3_X':self.lcd_X_pos,'Ch4_Y':self.lcd_Y_pos,'Ch5_Z':self.lcd_Z_pos}
-        self.ch_values_dict={'Ch3_X':0,'Ch4_Y':0,'Ch5_Z':0}
-        self.ch_speedmode={"LSPD":"L","MSPD":"M","HSPD":"H"}
-        self.step_X_size=1
-        self.step_Y_size=1
-        self.step_Z_size=1
-        self.Step_X_pos.valueChanged.connect(self.get_X_step)
-        self.Step_Y_pos.valueChanged.connect(self.get_Y_step)
-        self.Step_Z_pos.valueChanged.connect(self.get_Z_step)
-        # for ch postion plot
-        self.ch_valuelist_dict={'Ch3_X':[],'Ch4_Y':[],'Ch5_Z':[]}
-        self.ch_numlist_dict={'Ch3_X':[],'Ch4_Y':[],'Ch5_Z':[]}
-        self.ch_changeN_dict={'Ch3_X':0,'Ch4_Y':0,'Ch5_Z':0}
-        self.ch_figures_dict={'Ch3_X':self.X_pos_figure,'Ch4_Y':self.Y_pos_figure,'Ch5_Z':self.Z_pos_figure}
-        # for ch pos move flag
-        self.X_pos_move_flag=False
-        self.Y_pos_move_flag=False
-        self.Z_pos_move_flag=False
-        #for pmc motor status
-        self.pmc_status_timer=QTimer() # status timer
-        self.pmc_status_timer.timeout.connect(self.update_pmc_status)
-        self.pmc_shining_flag=0 # for indicate pmc connection
-
-
-    @Slot()
-    def on_Connect_pmc_btn_clicked(self):
-        self.show_PMC_status()
-        self.updateall_ch_values()
-
-    @Slot()
-    def update_pmc_status(self):
-        if self.pmc_motor.connect_status:
-            if self.pmc_shining_flag==0:
-                self.Connect_pmc_btn.setStyleSheet("QPushButton{background-color: rgb(0, 255, 127);color:rgb(255, 255, 255)}")
-                self.pmc_shining_flag=1
-            elif self.pmc_shining_flag==1:
-                self.Connect_pmc_btn.setStyleSheet("QPushButton{background-color: rgb(0, 170, 127);color:rgb(255, 255, 255)}")
-                self.pmc_shining_flag=0
-        else:
-            pass
-
-    @log_exceptions(log_func=logger.error)
-    @Slot(int)
-    def set_scan_channel(self, n: int):
-        """
-        choose instrument to measure current
-        :return:
-        """
-        self.Channel_tabs.setCurrentIndex(n)
-        self.scan_channel_name=self.Channel_cbx.currentText()
-        self.scan_channel=pmc_channels.get(self.Channel_cbx.currentText(),3)
-        self._scan_range_set_flag=0
-        self.updateall_ch_values()
-
-    def updateall_ch_values(self):
-        if self.pmc_motor.connect_status:
-            self.pmc_shining_flag=1
-            # get value of all 16 channels
-            self.update_ch_value('Ch3_X')
-            self.update_ch_value('Ch4_Y')
-            self.update_ch_value('Ch5_Z')
-            self.pmc_status_timer.start(1000)
-            self.update_ch_SPD()
-            
-    def update_ch_value(self,ch_name:str):
-        """update the ch_name value and plot
-
-        Args:
-            ch_name (str): _description_
-        """
-        ch_num=pmc_channels.get(ch_name)
-        #print(f'update channel:{ch_num} with name:{ch_name}')
-        if isinstance(ch_num,int):
-            # get the channel value
-            ch_value=self.pmc_motor.get_pos(str(ch_num))
-            if isinstance(ch_value,int):
-                #self.ch_pos_lcd_dict[ch_name].display(ch_value)
-                print(f'update channel:{ch_num} with name:{ch_name} value:{ch_value}')
-                self.ch_values_dict[ch_name]=ch_value
-                self.ch_changeN_dict[ch_name]+=1
-                self.ch_valuelist_dict[ch_name].append(ch_value)
-                self.ch_numlist_dict[ch_name].append(self.ch_changeN_dict[ch_name])
-                # display on lcd and plot
-                self.ch_pos_lcd_dict[ch_name].display(ch_value)
-                self.plot_ch_pos(self.ch_figures_dict[ch_name],self.ch_numlist_dict[ch_name],self.ch_valuelist_dict[ch_name])
-                
-    def plot_ch_pos(self,ch_figure, x_num_list, x_pos):
-        """
-        plot Grating position based on list: [x_pos] and change list [x_num_list]
-        :param x_pos:
-        :param x_num_list:
-        :return:
-        """
-        if x_pos and x_num_list:
-            if len(x_pos) > 100:
-                x_pos = x_pos[-100:]
-                x_num_list = x_num_list[-100:]
-            # print(x_pos, x_num_list)
-            ch_figure.axes.cla()
-            ch_figure.axes.plot(x_num_list, x_pos, '-oc', markersize=1)
-            ch_figure.draw()
-
-    # for channel speed mode
-    @Slot(int)
-    def set_ch_speedmode(self,n:int):
-        """set the current channel speedmode[L,M,H]
-
-        Returns:
-            _type_: _description_
-        """
-        print(f'select speed mode:{self.SPD_cbx.currentText()}')
-        selected_ch=pmc_channels.get(self.Channel_cbx.currentText(),3)
-        speed_mode=self.ch_speedmode.get(self.SPD_cbx.currentText())
-        if self.pmc_motor.connect_status:
-            self.pmc_motor.set_SPD(ch=str(selected_ch),mode=speed_mode)
-
-    def update_ch_SPD(self):
-        """update the current ch spd
-
-        Returns:
-            _type_: _description_
-        """
-        SPD_index={"LSPD":0,"MSPD":1,"HSPD":2}
-        selected_ch=pmc_channels.get(self.Channel_cbx.currentText(),3)
-        if self.pmc_motor.connect_status:
-            speed_mode=self.pmc_motor.get_SPD(ch=str(selected_ch))
-            print(f'{self.Channel_cbx.currentText()} speed mode:{speed_mode} ')
-            if speed_mode:
-                self.SPD_cbx.setCurrentIndex(SPD_index.get(speed_mode,0))
-
-    # for step size
-    @Slot()
-    def get_X_step(self):
-        """
-        get Ch3 X step size (um)
-        :return:
-        """
-        self.step_X_size = int(self.Step_X_pos.text().strip(' um'))
-        print(f'set ch3 X step size to: {self.step_X_size}')
-    
-    @Slot()
-    def get_Y_step(self):
-        """
-        get Ch3 X step size (um)
-        :return:
-        """
-        self.step_Y_size = int(self.Step_Y_pos.text().strip(' um'))
-        print(f'set ch4 Y step size to: {self.step_Y_size}')
-
-    @Slot()
-    def get_Z_step(self):
-        """
-        get Ch3 X step size (um)
-        :return:
-        """
-        self.step_Z_size = int(self.Step_Z_pos.text().strip(' um'))
-        print(f'set ch5 Z step size to: {self.step_Z_size}')
-
-    # for Ch3_X step move
-    @Slot()
-    def on_X_pos_left_clicked(self):
-        """left clicked X pos move to current ch_value-ch_step
-        """
-        if self.pmc_motor.connect_status and not self.X_pos_move_flag:
-            current_X_pos=self.ch_values_dict['Ch3_X']
-            new_pos=current_X_pos-self.step_X_size
-            ch_num=ch_num=pmc_channels.get("Ch3_X")
-            try:
-                self.pmc_XLsetQThread = pmcSetThread(self.pmc_motor,ch_num, pos=new_pos,num=1,wait=100)
-                self.pmc_XLsetQThread.done_signal.connect(self.pmcX_set_done)
-                self.pmc_XLsetQThread.start()
-                self.X_pos_move_flag=True
-            except Exception as e:
-                print(e)
-                logger.error(traceback.format_exc() + str(e))
-        else:
-            self.raise_info('pmc not connected or last step not finished , will not move')
-
-    @Slot()
-    def on_X_pos_right_clicked(self):
-        """right clicked X pos move to current ch_value+ch_step
-        """
-        if self.pmc_motor.connect_status and not self.X_pos_move_flag:
-            current_X_pos=self.ch_values_dict['Ch3_X']
-            new_pos=current_X_pos+self.step_X_size
-            ch_num=ch_num=pmc_channels.get("Ch3_X")
-            try:
-                self.pmc_XRsetQThread = pmcSetThread(self.pmc_motor,ch_num, pos=new_pos,num=1,wait=100)
-                self.pmc_XRsetQThread.done_signal.connect(self.pmcX_set_done)
-                self.pmc_XRsetQThread.start()
-                self.X_pos_move_flag=True
-            except Exception as e:
-                print(e)
-                logger.error(traceback.format_exc() + str(e))
-        else:
-            self.raise_info('pmc not connected or last step not finished , will not move')
+            self.raise_info('Channel not connected or last step not finished , will not move')
 
     @Slot(list)
-    def pmcX_set_done(self,resp:list):
+    def ch_pos_set_done(self,resp:list):
         """ get the pmcX set info
         """
-        self.X_pos_move_flag=False
+        self.ch_pos_move_flag=False
         print(f'{resp[-1]}\npos_now: {resp[0]} with set_pos: {resp[1]}')
-        self.update_ch_value('Ch3_X')
-
-    # for Ch4_Y step move
-    @Slot()
-    def on_Y_pos_left_clicked(self):
-        """left clicked Y pos move to current ch_value-ch_step
-        """
-        if self.pmc_motor.connect_status and not self.Y_pos_move_flag:
-            current_Y_pos=self.ch_values_dict['Ch4_Y']
-            new_pos=current_Y_pos-self.step_Y_size
-            ch_num=ch_num=pmc_channels.get("Ch4_Y")
-            try:
-                self.pmc_YLsetQThread = pmcSetThread(self.pmc_motor,ch_num, pos=new_pos,num=1,wait=100)
-                self.pmc_YLsetQThread.done_signal.connect(self.pmcY_set_done)
-                self.pmc_YLsetQThread.start()
-                self.Y_pos_move_flag=True
-            except Exception as e:
-                print(e)
-                logger.error(traceback.format_exc() + str(e))
-        else:
-            self.raise_info('pmc not connected or last step not finished , will not move')
-
-    
-    @Slot()
-    def on_Y_pos_right_clicked(self):
-        """right clicked Y pos move to current ch_value+ch_step
-        """
-        if self.pmc_motor.connect_status and not self.Y_pos_move_flag:
-            current_Y_pos=self.ch_values_dict['Ch4_Y']
-            new_pos=current_Y_pos+self.step_Y_size
-            ch_num=ch_num=pmc_channels.get("Ch4_Y")
-            try:
-                self.pmc_YRsetQThread = pmcSetThread(self.pmc_motor,ch_num, pos=new_pos,num=1,wait=100)
-                self.pmc_YRsetQThread.done_signal.connect(self.pmcY_set_done)
-                self.pmc_YRsetQThread.start()
-                self.Y_pos_move_flag=True
-            except Exception as e:
-                print(e)
-                logger.error(traceback.format_exc() + str(e))
-        else:
-            self.raise_info('pmc not connected or last step not finished , will not move')
-
-    @Slot(list)
-    def pmcY_set_done(self,resp:list):
-        """ get the pmcY set info
-        """
-        self.Y_pos_move_flag=False
-        print(f'{resp[-1]}\npos_now: {resp[0]} with set_pos: {resp[1]}')
-        self.update_ch_value('Ch4_Y')
-
-    # for Ch5_Z step move
-    @Slot()
-    def on_Z_pos_left_clicked(self):
-        """left clicked Y pos move to current ch_value-ch_step
-        """
-        if self.pmc_motor.connect_status and not self.Z_pos_move_flag:
-            current_Z_pos=self.ch_values_dict['Ch5_Z']
-            new_pos=current_Z_pos-self.step_Z_size
-            ch_num=ch_num=pmc_channels.get("Ch5_Z")
-            try:
-                self.pmc_ZLsetQThread = pmcSetThread(self.pmc_motor,ch_num, pos=new_pos,num=1,wait=100)
-                self.pmc_ZLsetQThread.done_signal.connect(self.pmcZ_set_done)
-                self.pmc_ZLsetQThread.start()
-                self.Z_pos_move_flag=True
-            except Exception as e:
-                print(e)
-                logger.error(traceback.format_exc() + str(e))
-        else:
-            self.raise_info('pmc not connected or last step not finished , will not move')
-
-    
-    @Slot()
-    def on_Z_pos_right_clicked(self):
-        """right clicked Z pos move to current ch_value+ch_step
-        """
-        if self.pmc_motor.connect_status and not self.Z_pos_move_flag:
-            current_Z_pos=self.ch_values_dict['Ch5_Z']
-            new_pos=current_Z_pos+self.step_Z_size
-            ch_num=ch_num=pmc_channels.get("Ch5_Z")
-            try:
-                self.pmc_ZRsetQThread = pmcSetThread(self.pmc_motor,ch_num, pos=new_pos,num=1,wait=100)
-                self.pmc_ZRsetQThread.done_signal.connect(self.pmcZ_set_done)
-                self.pmc_ZRsetQThread.start()
-                self.Y_pos_move_flag=True
-            except Exception as e:
-                print(e)
-                logger.error(traceback.format_exc() + str(e))
-        else:
-            self.raise_info('pmc not connected or last step not finished , will not move')
-
-    @Slot(list)
-    def pmcZ_set_done(self,resp:list):
-        """ get the pmcY set info
-        """
-        self.Z_pos_move_flag=False
-        print(f'{resp[-1]}\npos_now: {resp[0]} with set_pos: {resp[1]}')
-        self.update_ch_value('Ch5_Z')
-
 
     """
-    end of the pmc X-Y-Z motor part 
+    end of the chanel set motor part 
     """
     # **************************************LIMIN_Zhou_at_SSRF_BL20U**************************************
 
@@ -1064,49 +754,48 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
     start of the PMC motion vs pAmeter plot part
     """
 
-    def __ini_PMC_plot__(self):
+    def __ini_ch_plot__(self):
         # data structure for plot and save
         self._plot_ch_list = []
         self._plot_pAmeter_list = []
         self._time_stamp = []
         # min-max BPM X/Z axis position and step size (um)
-        self._min_X_pos = -100000
-        self._max_X_pos = 100000
-        self._min_X_step = 0.5
-        self._max_X_step = 1000
-        self._min_Z_pos = -100000
-        self._max_Z_pos = 100000
-        self._min_Z_step = 0.5
-        self._max_Z_step = 1000
+        self._min_ch_pos = -100000
+        self._max_ch_pos = 100000
+        self._min_ch_step = 0.5
+        self._max_ch_step = 1000
         # flag for status 1 is on , 0 is off
         self._start_plot_flag = 0
         self._scan_range_set_flag = 0
-        self._scan_pmc_ch_flag = 0
+        self._scan_ch_flag = 0
         self._scan_list = []
         self._scan_list_num = 0  # number of scan list
         self._scan_N = 0  # index of scan list
         self._save_file_flag = 0
         self._save_N = 0  # index for save order
         self.scan_ch_num=None
-        self._scan_info=None
+        self._scan_info=[None,None]
 
     @log_exceptions(log_func=logger.error)
     @Slot()
     def on_Input_scan_range_btn_clicked(self):
         """
-        check which ch axis is chosen(ch3-ch6), get the scan range list and return
+        check which channel is chosen, get the scan range list and return
         :return: scan range list
         """
         self.scan_channel_name=self.Channel_cbx.currentText()
-        self.updateall_ch_values()
-        print(f'choose scan channel: {self.scan_channel_name}')
-        input_info = f'scan channel: {self.scan_channel_name}\nCurrent value:\n{self.scan_channel_name}:' \
-                    f'{self.ch_values_dict[self.scan_channel_name]}'
-        # input_info = f'Input BPM Z range:\nmin:{self._min_Z_pos}\nmax:{self._max_Z_pos}' \
-        #                  f'\nstep range:{self._min_Z_step}-{self._max_Z_step}'
-        self.inputRange_dialog = InputScanRange(f'{self.scan_channel_name}', input_info)
-        self.inputRange_dialog.data_sig.connect(self.get_scan_range)
-        self.inputRange_dialog.show()
+        self.scan_channel=FULL_Channels.get(self.Channel_cbx.currentText(),None)
+        if self.scan_channel:
+            # basic PV names for scan ch set readback and motor moving status[optional]
+            self.scan_ch_PVset=self.scan_channel.get("PV_SET",None)
+            self.scan_ch_PVrbv=self.scan_channel.get("PV_RBV",None)
+            self.scan_ch_PVmovn=self.scan_channel.get("PV_Motor_MOVN",None)
+            print(f'choose scan channel: {self.scan_channel_name}')
+            input_info = f'scan channel: {self.scan_channel_name}\nCurrent value:\n{self.scan_channel_name}:' \
+                        f'{self.ch_value_dict[self.scan_channel_name]}\nScan info:\n{self._scan_info[-1]}'
+            self.inputRange_dialog = InputScanRange(f'{self.scan_channel_name}', input_info)
+            self.inputRange_dialog.data_sig.connect(self.get_scan_range)
+            self.inputRange_dialog.show()
 
     @Slot(list)
     def get_scan_range(self, scan_range_list: list):
@@ -1136,16 +825,10 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
         self.clear_all_data()
         print(f'start plot={self._start_plot_flag}-set scan range={self._scan_range_set_flag}')
         if self._start_plot_flag == 0 and self._scan_range_set_flag == 1 and isinstance(self._scan_info,list):
-            # scan is off
-            print(f'scan channel={self._scan_info[0]}')
-            scan_ch_num=pmc_channels.get(self._scan_info[0])
-            # scan the channel with the scan_list
-            print(f"start scan, Channel:{self._scan_info[0]}, ch_num:{scan_ch_num}")
-            self.scan_ch_pA(scan_ch_num,self._scan_info[-1])
-        # elif self._start_plot_flag == 0 and self._scan_range_set_flag == 0:
-        #     # scan range not set
-        #     print('should set scan range first')
-        #     self.raise_info('should set scan range first')
+            
+            #  scan is off, now scan the channel with the scan_list
+            print(f"start scan, Channel:{self._scan_info[0]}")
+            self.scan_ch_pA(self._scan_info[0],self._scan_info[-1])
         else:
             # scan is already on, can not start
             print('scan is already on, stop scan or wait!')
@@ -1159,14 +842,12 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
     full sequence of ch-pAmeter scan
     """
     @log_exceptions(log_func=logger.error)
-    def scan_ch_pA(self,ch_num,range_list:list):
+    def scan_ch_pA(self,ch_name,range_list:list):
         """scan one channel and plot
         """
         self._start_plot_flag = 1
-        self._scan_pmc_ch_flag = 1
-        
-        if ch_num and isinstance(range_list, list):
-            self.scan_ch_num=ch_num
+        self._scan_ch_flag = 1
+        if ch_name and isinstance(range_list, list):
             # set up time hint
             EP_Time = len(range_list) * 6.0
             t_done = time.time() + EP_Time
@@ -1184,26 +865,21 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
         if cmd[0] == 'OK':
             # set ch position
             #self.pmc_motor.set_pos(str(self.scan_ch_num),self._scan_list[self._scan_N])
-            self.pmcsetQThread = pmcSetThread(self.pmc_motor,ch_num=self.scan_ch_num, pos=self._scan_list[self._scan_N],num=1)
-            self.pmcsetQThread.done_signal.connect(self.pmc_set_done)
-            self.pmcsetQThread.start()
+            new_pos=self._scan_list[self._scan_N]
+            self.ch_scan_thread = PVmotorThread(self.scan_ch_PVset, new_pos, self.scan_ch_PVrbv, self.ch_PVmovn, 1)
+            self.ch_scan_thread.done_signal.connect(self.ch_scan_set_done)
+            self.ch_scan_thread.start()
 
     @log_exceptions(log_func=logger.error)
     @Slot(list)
-    def pmc_set_done(self, resp: list):
-        print(f'get pmc channel{resp[-2]} set info:{resp}')
+    def ch_scan_set_done(self, resp: list):
+        print(f'get channel {self.scan_channel_name} with set info:{resp}')
         # save the real read-back value for plot
         self._plot_ch_list.append(resp[0])
         # start read pAmeter
-        self.ch_pAmeter6514 = Keithley6514Com(port=self.serial_port, func='currents', points=5,full_time=100,keep_on=0)
-        self.ch_pAmeter6514.data_sig.connect(self.get_ch_pA_data)
-        #status = self.ch_pAmeter6514.open_port(self.Selected_port)
-        status ="OK"
-        if status=="OK":
-            #self.ch_pAmeter6514.clear_status()
-            #self.MT_pAmeter6514.zero_check(status='OFF')
-            #self.ch_pAmeter6514.conf_function('current',wait=100)
-            self.ch_pAmeter6514.start()
+        self.ch_pAmeter6485 = Keithley6485Com(port=self.serial_port, func='currents', points=5,full_time=100,keep_on=0)
+        self.ch_pAmeter6485.data_sig.connect(self.get_ch_pA_data)
+        self.ch_pAmeter6514.start()
     
     @log_exceptions(log_func=logger.error)
     @Slot(list)
@@ -1220,8 +896,6 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
             if self._scan_N < self._scan_list_num:
                 self.scan_start_sig.emit(['OK', self._scan_N])
                 self.set_progress_Bar(int(100*self._scan_N/self._scan_list_num))
-                #update ch value
-                self.update_ch_value(self.scan_channel_name)
             else:
                 print('all position in list have been set')
                 full_data =self.get_full_data()
@@ -1236,13 +910,12 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
                 done_stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 self.Done_time.setText(f'Finished at:{done_stamp}')
                 self.scan_start_sig.disconnect(self.start_ch_pA_set)
-                self._scan_pmc_ch_flag = 0
+                self._scan_ch_flag = 0
                 self._start_plot_flag = 0
-                self.updateall_ch_values()
 
 
     """
-        end full sequence of pmc-pA scan
+        end full sequence of ch-pA scan
     """
     # **************************************LIMIN_Zhou_at_SSRF_BL20U**************************************
 
@@ -1281,13 +954,14 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
         valid_full_data = dict()
         ch_name=self.scan_channel_name
         temp_full_data = {ch_name: self._plot_ch_list,  'current(pA)': self._plot_pAmeter_list,
-                          'time_stamp': self._time_stamp, 'scan set': self._scan_list}
+                          'time_stamp': self._time_stamp, 'scan set': self._scan_list[0:len(self._plot_ch_list)]}
         # get the valid scan data (not empty)
         for key, value in temp_full_data.items():
             if value:
                 valid_full_data[key] = value
         return valid_full_data
 
+    
     # clear all data
     @log_exceptions(log_func=logger.error)
     def clear_all_data(self):
@@ -1364,9 +1038,9 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
         try:
             if self._start_plot_flag == 0:
                 self.raise_info('nothing to stop')
-            if self._scan_pmc_ch_flag == 1:
+            if self._scan_ch_flag == 1:
                 self.scan_start_sig.disconnect(self.start_ch_pA_set)
-                self._scan_pmc_ch_flag = 0
+                self._scan_ch_flag = 0
         except Exception as e:
             print(e)
             logger.error(traceback.format_exc() + str(e))
@@ -1378,8 +1052,6 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
             folder = time.strftime('%Y-%m-%d', time.localtime())
             save_folder = creatPath(os.path.join(save_path, folder))
             self.usr_save_full_data(scan_data, path=save_folder, usr_define=1)
-            self.updateall_ch_values()
-
     @log_exceptions(log_func=logger.error)
     @Slot()
     def on_Clear_Save_clicked(self):
@@ -1388,7 +1060,7 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
         :return:
         """
          
-        if self._scan_pmc_ch_flag == 0:
+        if self._scan_ch_flag == 0:
             # clear figure
             self.figure.axes.cla()
             self.figure.draw()
@@ -1396,7 +1068,6 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
             scan_data = self.get_full_data()
             self.usr_save_full_data(scan_data, save_path, usr_define=1)
             self.clear_all_data()
-            self.updateall_ch_values()
         else:
             self.raise_warning('scan is on, can not clear')
 
@@ -1422,6 +1093,6 @@ class BeamMotionPlot(QMainWindow, Ui_MainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    win = PMCMotionPlot()
+    win = BeamMotionPlot()
     win.show()
     sys.exit(app.exec())

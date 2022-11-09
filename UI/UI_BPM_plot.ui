@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1453</width>
-    <height>838</height>
+    <height>839</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -421,7 +421,7 @@ background-color: rgb(180, 249, 255);</string>
             </property>
             <item>
              <property name="text">
-              <string>Energy</string>
+              <string>SoftEnergy</string>
              </property>
             </item>
             <item>
@@ -437,7 +437,7 @@ background-color: rgb(180, 249, 255);</string>
            </widget>
           </item>
           <item>
-           <widget class="QPushButton" name="Connect_pmc_btn">
+           <widget class="QPushButton" name="Connect_ch_btn">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
               <horstretch>2</horstretch>
@@ -6113,7 +6113,7 @@ hr { height: 1px; border-width: 0; }
      <rect>
       <x>342</x>
       <y>306</y>
-      <width>163</width>
+      <width>161</width>
       <height>50</height>
      </rect>
     </property>
@@ -6293,7 +6293,6 @@ hr { height: 1px; border-width: 0; }
     <property name="title">
      <string>Instrument</string>
     </property>
-    <addaction name="actionPMC_motor"/>
     <addaction name="actionpAmeter"/>
    </widget>
    <widget class="QMenu" name="menuhelp">

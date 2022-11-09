@@ -49,7 +49,7 @@ log_path = os.path.join(os.getcwd(), 'log_info')
 creatPath(log_path)
 # logger
 log_file = f'Keithley6514_{time.strftime("%Y-%m-%d", time.localtime())}.log'
-Keithley6514_logger = my_logger(log_file=os.path.join(log_path, log_file), logger_name='Keithley6517B')
+Keithley6485_logger = my_logger(log_file=os.path.join(log_path, log_file), logger_name='Keithley6517B')
 
 """
 worker Qthread for reading current[aA~mA] from Keithley 6514 electrometer
@@ -204,7 +204,7 @@ class Keithley6485Com(QThread):
         except Exception as e:
             error_info = traceback.format_exc()
             print(error_info)
-            Keithley6514_logger.error("Connection fail %s", e, exc_info=True)
+            Keithley6485_logger.error("Connection fail %s", e, exc_info=True)
         else:
             self.connect_flag = True
             self.socket_TCP.send(self.send_msg)
@@ -214,7 +214,7 @@ class Keithley6485Com(QThread):
                 resp = self.socket_TCP.recv(BUFSIZ)
                 if resp:
                     self.response_msg = resp.decode('utf-8')
-                    Keithley6514_logger.info("get response %s", self.response_msg)
+                    Keithley6485_logger.info("get response %s", self.response_msg)
                     # print(f'response:{self.response_msg} from address:{self.address}')
                     break
         finally:
@@ -468,7 +468,7 @@ class Keithley6485Com(QThread):
                 except Exception as e:
                     error_info = traceback.format_exc()
                     print(error_info)
-                    Keithley6514_logger.error("Connection fail %s", e, exc_info=True)
+                    Keithley6485_logger.error("Connection fail %s", e, exc_info=True)
                 finally:
                     print(f'start emit:{[pA_currents, pA_currents, status]}')
                     self.data_sig.emit([pA_currents,pA_currents, status])
